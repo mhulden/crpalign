@@ -222,8 +222,16 @@ double fill_trellis(int *in, int *out, double(*cost)(int, int), int mode) {
 				down = g_trellis[x][y-1] + cost(in[y-1], 0);
 				diag = g_trellis[x-1][y-1] + cost(in[y-1], out[x-1]);
 				g_backptr[x][y] = random_3draw(left, diag, down);
-				x--;
-				y--;
+				if (g_backptr[x][y] == LEFT) {
+					x--;
+				}
+				if (g_backptr[x][y] == DOWN) {
+					y--;
+				}
+				if (g_backptr[x][y] == DIAG) {
+					x--;
+					y--;
+				}
 			}
 		}
     }
