@@ -16,6 +16,7 @@
 /* WARNING: currently not thread-safe */
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -103,6 +104,37 @@ void debug(const char *fmt, ...) {
 	}
 }
 
+/* Decode one UTF-8 codepoint, return codepoint, set *len to bytes consumed */
+static uint32_t utf8_decode(const unsigned char *s, int *len) {
+    unsigned char c = s[0];
+    if (c < 0x80) { *len = 1; return c; }
+    if ((c & 0xE0) == 0xC0) { *len = 2; return ((c & 0x1F) << 6) | (s[1] & 0x3F); }
+    if ((c & 0xF0) == 0xE0) { *len = 3; return ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F); }
+    if ((c & 0xF8) == 0xF0) { *len = 4; return ((c & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F); }
+    *len = 1;
+    return c;
+}
+
+/* Heuristic: treat codepoints in common "combining mark" blocks as combining */
+static int is_combining_mark(uint32_t cp) {
+    /* Combining Diacritical Marks */
+    if (cp >= 0x0300 && cp <= 0x036F) return 1;
+    /* Combining Diacritical Marks Extended */
+    if (cp >= 0x1AB0 && cp <= 0x1AFF) return 1;
+    /* Combining Diacritical Marks Supplement */
+    if (cp >= 0x1DC0 && cp <= 0x1DFF) return 1;
+    /* Combining Diacritical Marks for Symbols */
+    if (cp >= 0x20D0 && cp <= 0x20FF) return 1;
+    /* Combining Half Marks */
+    if (cp >= 0xFE20 && cp <= 0xFE2F) return 1;
+
+    /* NKo combining marks (covers U+07F2 etc.) */
+    if (cp >= 0x07EB && cp <= 0x07F3) return 1;
+
+    return 0;
+}
+
+
 /* Gives length in bytes of UTF-8 character */
 int utf8len(char *str) {
 	unsigned char s;
@@ -119,6 +151,22 @@ int utf8len(char *str) {
 		return 4;
 	}
 	return 0;
+}
+
+/* Returns a display-width approximation: count base codepoints, ignore combining marks */
+int utf8displaylen(const char *str) {
+    int i = 0, w = 0;
+    int len = (int)strlen(str);
+    while (i < len && str[i] != '\0') {
+        int l = 0;
+        uint32_t cp = utf8_decode((const unsigned char*)(str + i), &l);
+        if (l <= 0) l = 1;
+        if (!is_combining_mark(cp)) {
+            w += 1;  /* count only non-combining as a column */
+        }
+        i += l;
+    }
+    return w;
 }
 
 /* Reverses an integer sequence in-place */
@@ -435,14 +483,81 @@ void add_string_pair(char *in, char *out) {
     int_in  = malloc(sizeof(int) * (utf8strlen(in) + 1));
     int_out = malloc(sizeof(int) * (utf8strlen(out) + 1));
 	if (g_input_format == INPUT_FORMAT_L2P) {
-		for (i = 0, j = 0; in[i] != '\0'; i += utf8len(&in[i]), j++) {
-			int_in[j] = get_set_char_num(strndup(&in[i], utf8len(&in[i])));
+		
+		for (i = 0, j = 0; in[i] != '\0'; j++) {
+			char buf[128];
+			int blen = 0;
+		
+			int l1 = 0;
+			uint32_t cp1 = utf8_decode((unsigned char*)&in[i], &l1);
+			(void)cp1;
+
+			/* copy base codepoint bytes */
+			if (l1 <= 0)
+				l1 = 1;
+			if (blen + l1 >= (int)sizeof(buf))
+				l1 = (int)sizeof(buf) - blen - 1;
+			memcpy(buf + blen, &in[i], l1);
+			blen += l1;
+			i += l1;
+		
+			/* absorb following combining marks */
+			while (in[i] != '\0') {
+				int l2 = 0;
+				uint32_t cp2 = utf8_decode((unsigned char*)&in[i], &l2);
+				if (!is_combining_mark(cp2))
+					break;
+				if (l2 <= 0) l2 = 1;
+				if (blen + l2 >= (int)sizeof(buf))
+					break; /* very rare: too many marks */
+				memcpy(buf + blen, &in[i], l2);
+				blen += l2;
+				i += l2;
+			}
+		
+			buf[blen] = '\0';
+			int_in[j] = get_set_char_num(buf);
 		}
 		int_in[j] = -1;
-		for (i = 0, j = 0; out[i] != '\0'; i += utf8len(&out[i]), j++) {
-			int_out[j] = get_set_char_num(strndup(&out[i], utf8len(&out[i])));
+		
+		for (i = 0, j = 0; out[i] != '\0'; j++) {
+ 			char buf[128];
+			int blen = 0;
+		
+			int l1 = 0;
+			uint32_t cp1 = utf8_decode((unsigned char*)&out[i], &l1);
+			(void)cp1;
+
+			/* copy base codepoint bytes */
+			if (l1 <= 0)
+				l1 = 1;
+			if (blen + l1 >= (int)sizeof(buf))
+				l1 = (int)sizeof(buf) - blen - 1;
+			memcpy(buf + blen, &out[i], l1);
+			blen += l1;
+			i += l1;
+		
+			/* absorb following combining marks */
+			while (out[i] != '\0') {
+				int l2 = 0;
+				uint32_t cp2 = utf8_decode((unsigned char*)&out[i], &l2);
+				if (!is_combining_mark(cp2))
+					break;
+				if (l2 <= 0) l2 = 1;
+				if (blen + l2 >= (int)sizeof(buf))
+					break;
+				memcpy(buf + blen, &out[i], l2);
+				blen += l2;
+				i += l2;
+			}
+		
+			buf[blen] = '\0';
+			int_out[j] = get_set_char_num(buf);
 		}
 		int_out[j] = -1;
+
+
+		
 	} else if (g_input_format == INPUT_FORMAT_NEWS) {
 		token = strtok(in, " ");
 		for (j = 0; token != NULL; j++) {
@@ -547,7 +662,8 @@ void print_pair_aligned(int *in, int *out) {
 	for (i = 0; in[i] != -1 && out[i] != -1; i++) {
 		instr = g_symboltable[ in[i] ];
 		outstr =  g_symboltable[ out[i] ];
-		fieldwidth = utf8strlen(instr) > utf8strlen(outstr) ? utf8strlen(instr) : utf8strlen(outstr);
+		fieldwidth = utf8displaylen(instr) > utf8displaylen(outstr) ? utf8displaylen(instr) : utf8displaylen(outstr);
+
 		printf("%-*s", fieldwidth, instr);
 		if (in[i+1] != -1 && out[i+1] != -1)
 			printf("|");      
@@ -556,7 +672,7 @@ void print_pair_aligned(int *in, int *out) {
 	for (i = 0; in[i] != -1 && out[i] != -1; i++) {
 		instr = g_symboltable[ in[i] ];
 		outstr =  g_symboltable[ out[i] ];
-		fieldwidth = utf8strlen(instr) > utf8strlen(outstr) ? utf8strlen(instr) : utf8strlen(outstr);
+		fieldwidth = utf8displaylen(instr) > utf8displaylen(outstr) ? utf8displaylen(instr) : utf8displaylen(outstr);
 		printf("%-*s", fieldwidth, outstr);
 		if (in[i+1] != -1 && out[i+1] != -1)
 			printf("|");      
@@ -655,7 +771,7 @@ int main(int argc, char **argv) {
 		{"prior",       required_argument, 0, 'p'},
 		{0, 0, 0, 0}
 	};
-    
+
 	while ((opt = getopt_long(argc, argv, "dmx:b:l:p:i:o:h", long_options, &option_index)) != -1) {
 		switch(opt) {
 			case 'd':
@@ -705,7 +821,7 @@ int main(int argc, char **argv) {
 			break;
 		}
 	}
-    
+
 	srand48((unsigned int)time((time_t *)NULL));   
 	read_stringpairs();
 	if (g_med == 1) {
