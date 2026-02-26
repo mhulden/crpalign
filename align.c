@@ -316,6 +316,7 @@ void remove_counts(int *in, int *out) {
 	int i;
 	for (i = 0; in[i] != -1 && out[i] != -1; i++) {
 		g_current_count[in[i]][out[i]]--;
+		g_paircount--;
 		if (g_current_count[in[i]][out[i]] == 0) {
 			g_distinct_pairs--;
 		}
