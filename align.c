@@ -12,7 +12,7 @@
 /*                                                                      */
 /************************************************************************/
 
-/* To build python bindings: gcc -O3 -Wall -Wextra -shared align.c -o libalign.so */
+/* To build python bindings: gcc -O3 -Wall -Wextra -fPIC -shared align.c -o libalign.so -lm */
 /* WARNING: currently not thread-safe */
 
 #include <stdio.h>
@@ -72,7 +72,10 @@ struct stringpair {          /* These are all               */
 
 void align_init(void) {
 	g_stringpairs = NULL;
-	g_stringpairs_tail = NULL;	
+	g_stringpairs_tail = NULL;
+	g_paircount = 0;
+	g_distinct_pairs = 0;
+	g_maxsymbol = 0;
 }
 
 int intseqlen(int *seq) {
@@ -339,8 +342,8 @@ void add_counts(int *in, int *out) {
 /* Add running counts of pairs to the global count table */
 void add_global_counts() {
 	int i, j;
-	for (i = 0; i <= g_maxsymbol; i++) {
-		for (j = 0; j <= g_maxsymbol; j++) {
+	for (i = 0; i < 256; i++) {
+		for (j = 0; j < 256; j++) {
 			g_global_count[i][j] += g_current_count[i][j];
 		}
 	}
@@ -589,7 +592,7 @@ void add_string_pair(char *in, char *out) {
 
 /* Directly add two -1 terminated integer sequences */
 void add_int_pair(int *in, int *out) {
-	int inlen, outlen;
+	int i, inlen, outlen;
     struct stringpair *newpair;
     newpair = malloc(sizeof(struct stringpair));
 	inlen = intseqlen(in) + 1;
@@ -598,6 +601,16 @@ void add_int_pair(int *in, int *out) {
 	newpair->out = malloc(outlen * sizeof(int));
 	memcpy(newpair->in, in, inlen * sizeof(int));
 	memcpy(newpair->out, out, outlen * sizeof(int));
+	for (i = 0; newpair->in[i] != -1; i++) {
+		if (newpair->in[i] > g_maxsymbol) {
+			g_maxsymbol = newpair->in[i];
+		}
+	}
+	for (i = 0; newpair->out[i] != -1; i++) {
+		if (newpair->out[i] > g_maxsymbol) {
+			g_maxsymbol = newpair->out[i];
+		}
+	}
     newpair->next = NULL;
     if (g_stringpairs == NULL) {
 		g_stringpairs = newpair;
@@ -610,12 +623,14 @@ void add_int_pair(int *in, int *out) {
 
 void clear_counts() {	
 	int i,j;
-	for (i = 0; i <= g_maxsymbol; i++) {
-		for (j = 0; j <= g_maxsymbol; j++) {
+	for (i = 0; i < 256; i++) {
+		for (j = 0; j < 256; j++) {
 			g_current_count[i][j] = 0;
 			g_global_count[i][j] = 0;
 		}
 	}
+	g_paircount = 0;
+	g_distinct_pairs = 0;
 }
 
 void print_pair_plain(int *in, int *out) {
